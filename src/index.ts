@@ -23,23 +23,35 @@ const LINKING_ERROR =
   '- Rebuilt the app after installing the package\n' +
   '- You are not using Expo managed workflow\n';
 
-const NativeEventBridge = NativeModules.EventBridge;
-
-if (!NativeEventBridge) {
-  throw new Error(LINKING_ERROR);
-}
-
-const emitter = new NativeEventEmitter(NativeEventBridge);
+let cachedNativeBridge: typeof NativeModules.EventBridge | null | undefined;
+let emitter: NativeEventEmitter | undefined;
 const EVENT_NAME = 'EventBridgeEvent';
 
 const handlersByType = new Map<string, EventHandler>();
 let defaultHandler: EventHandler | undefined;
 let subscription: EmitterSubscription | undefined;
 
+function requireNativeBridge(): typeof NativeModules.EventBridge {
+  if (cachedNativeBridge === undefined) {
+    cachedNativeBridge = NativeModules.EventBridge ?? null;
+  }
+  if (!cachedNativeBridge) {
+    throw new Error(LINKING_ERROR);
+  }
+  return cachedNativeBridge;
+}
+
+function getEmitter(): NativeEventEmitter {
+  if (!emitter) {
+    emitter = new NativeEventEmitter(requireNativeBridge());
+  }
+  return emitter;
+}
+
 function ensureSubscription() {
   const shouldListen = handlersByType.size > 0 || defaultHandler != null;
   if (shouldListen && !subscription) {
-    subscription = emitter.addListener(EVENT_NAME, handleIncoming);
+    subscription = getEmitter().addListener(EVENT_NAME, handleIncoming);
     return;
   }
   if (!shouldListen && subscription) {
@@ -59,20 +71,25 @@ async function handleIncoming(raw: {
     payload: raw.payload ?? {},
   };
 
+  const bridge = requireNativeBridge();
   const handler = handlersByType.get(event.type) ?? defaultHandler;
 
   if (!handler) {
-    NativeEventBridge.reject(event.id, 'no_handler', 'No handler registered');
+    bridge.reject(
+      event.id,
+      'no_handler',
+      `未找到类型为 ${event.type} 的事件处理器`,
+    );
     return;
   }
 
   try {
     const result = await handler(event);
-    NativeEventBridge.respond(event.id, ensureJsonObject(result));
+    bridge.respond(event.id, ensureJsonObject(result));
   } catch (error) {
     const message =
       error instanceof Error ? error.message : JSON.stringify(error);
-    NativeEventBridge.reject(event.id, 'handler_error', message);
+    bridge.reject(event.id, 'handler_error', message);
   }
 }
 
@@ -131,5 +148,5 @@ export function dispatch<TPayload extends JsonObject, TResult extends JsonObject
   type: string,
   payload: TPayload,
 ): Promise<TResult> {
-  return NativeEventBridge.dispatch(type, ensureJsonObject(payload));
+  return requireNativeBridge().dispatch(type, ensureJsonObject(payload));
 }

@@ -48,6 +48,16 @@ class EventBridgeModule(private val reactContext: ReactApplicationContext) :
         resolver.reject(code, message)
     }
 
+    @ReactMethod
+    fun addListener(@Suppress("UNUSED_PARAMETER") eventName: String) {
+        // 与 JS 侧 NativeEventEmitter 契合的占位，避免新架构警告。
+    }
+
+    @ReactMethod
+    fun removeListeners(@Suppress("UNUSED_PARAMETER") count: Double) {
+        // React Native 会调用此方法告知原生清理监听器，这里无需额外处理。
+    }
+
     private fun emitEvent(params: WritableMap) {
         val emitter = reactContext
             .getJSModule(DeviceEventManagerModule.RCTDeviceEventEmitter::class.java)
@@ -114,7 +124,7 @@ class EventBridgeModule(private val reactContext: ReactApplicationContext) :
             private val promise: Promise
         ) : PendingResponse {
             override fun resolve(value: ReadableMap?) {
-                promise.resolve(value)
+                promise.resolve(value ?: Arguments.createMap())
             }
 
             override fun reject(code: String, message: String?) {
@@ -126,7 +136,7 @@ class EventBridgeModule(private val reactContext: ReactApplicationContext) :
             private val callback: EventBridgeCallback
         ) : PendingResponse {
             override fun resolve(value: ReadableMap?) {
-                callback.onResult(Result.success(value))
+                callback.onResult(Result.success(value ?: Arguments.createMap()))
             }
 
             override fun reject(code: String, message: String?) {

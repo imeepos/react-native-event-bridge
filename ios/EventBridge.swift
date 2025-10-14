@@ -24,7 +24,7 @@ class EventBridge: RCTEventEmitter {
         let eventId = UUID().uuidString
         let pending = PendingRequest(
             resolve: { value in
-                resolver(value ?? NSNull())
+                resolver(value ?? [:])
             },
             reject: { code, message in
                 rejecter(code, message, nil)
@@ -68,7 +68,7 @@ class EventBridge: RCTEventEmitter {
         let eventId = UUID().uuidString
         let pending = PendingRequest(
             resolve: { value in
-                completion(.success(value))
+                completion(.success(value ?? [:]))
             },
             reject: { code, message in
                 completion(.failure(EventBridgeError(code: code, message: message)))
