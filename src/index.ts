@@ -63,12 +63,12 @@ function ensureSubscription() {
 async function handleIncoming(raw: {
   id: string;
   type: string;
-  payload?: JsonObject;
+  payload?: unknown;
 }) {
   const event: IncomingEvent = {
     id: raw.id,
     type: raw.type,
-    payload: raw.payload ?? {},
+    payload: ensureJsonObject(raw.payload ?? {}),
   };
 
   const bridge = requireNativeBridge();
@@ -112,6 +112,10 @@ export function setEventHandler(
   type: string,
   handler: EventHandler,
 ): () => void {
+  const existing = handlersByType.get(type);
+  if (existing && existing !== handler) {
+    console.warn(`setEventHandler: 类型 ${type} 的处理器已存在，将被新的处理器覆盖`);
+  }
   handlersByType.set(type, handler);
   ensureSubscription();
 
@@ -144,9 +148,17 @@ export function setDefaultHandler(handler: EventHandler | undefined): () => void
  * Dispatches an event from JavaScript to native code and awaits the response.
  * This provides a symmetrical API if you need to send events in the opposite direction.
  */
+export function dispatch<TResult extends JsonObject>(
+  type: string,
+  payload?: undefined,
+): Promise<TResult>;
 export function dispatch<TPayload extends JsonObject, TResult extends JsonObject>(
   type: string,
   payload: TPayload,
+): Promise<TResult>;
+export function dispatch<TResult extends JsonObject>(
+  type: string,
+  payload?: JsonObject,
 ): Promise<TResult> {
-  return requireNativeBridge().dispatch(type, ensureJsonObject(payload));
+  return requireNativeBridge().dispatch(type, ensureJsonObject(payload ?? {}));
 }
