@@ -24,6 +24,7 @@ const LINKING_ERROR =
   '- You are not using Expo managed workflow\n';
 
 let cachedNativeBridge: typeof NativeModules.EventBridge | null | undefined;
+let testingNativeBridge: typeof NativeModules.EventBridge | null | undefined;
 let emitter: NativeEventEmitter | undefined;
 const EVENT_NAME = 'EventBridgeEvent';
 
@@ -32,13 +33,20 @@ let defaultHandler: EventHandler | undefined;
 let subscription: EmitterSubscription | undefined;
 
 function requireNativeBridge(): typeof NativeModules.EventBridge {
-  if (cachedNativeBridge === undefined) {
-    cachedNativeBridge = NativeModules.EventBridge ?? null;
+  const candidate =
+    testingNativeBridge !== undefined
+      ? testingNativeBridge
+      : NativeModules.EventBridge ?? null;
+
+  if (candidate !== cachedNativeBridge) {
+    resetNativeBindings();
+    cachedNativeBridge = candidate;
   }
-  if (!cachedNativeBridge) {
+
+  if (!candidate) {
     throw new Error(LINKING_ERROR);
   }
-  return cachedNativeBridge;
+  return candidate;
 }
 
 function getEmitter(): NativeEventEmitter {
@@ -68,7 +76,7 @@ async function handleIncoming(raw: {
   const event: IncomingEvent = {
     id: raw.id,
     type: raw.type,
-    payload: ensureJsonObject(raw.payload ?? {}),
+    payload: ensureJsonObject(raw.payload ?? {}, 'incoming_payload'),
   };
 
   const bridge = requireNativeBridge();
@@ -85,7 +93,7 @@ async function handleIncoming(raw: {
 
   try {
     const result = await handler(event);
-    bridge.respond(event.id, ensureJsonObject(result));
+    bridge.respond(event.id, ensureJsonObject(result, 'handler_result'));
   } catch (error) {
     const message =
       error instanceof Error ? error.message : JSON.stringify(error);
@@ -93,18 +101,119 @@ async function handleIncoming(raw: {
   }
 }
 
-function ensureJsonObject(value: unknown): JsonObject {
-  if (
-    typeof value !== 'object' ||
-    value === null ||
-    Array.isArray(value)
-  ) {
-    throw new Error('Handler must return a plain object');
+function ensureJsonObject(
+  value: unknown,
+  context: JsonContext,
+): JsonObject {
+  if (!isPlainRecord(value)) {
+    throw new Error(describeJsonExpectation(context));
   }
-  return value as JsonObject;
+
+  const record = value as Record<string, unknown>;
+  assertJsonRecord(record, new Set<unknown>(), context);
+  return record as JsonObject;
+}
+
+function assertJsonRecord(
+  record: Record<string, unknown>,
+  seen: Set<unknown>,
+  context: JsonContext,
+) {
+  if (seen.has(record)) {
+    throw new Error('数据存在循环引用，无法通过事件桥传递');
+  }
+
+  seen.add(record);
+  for (const [key, entry] of Object.entries(record)) {
+    if (entry === undefined) {
+      throw new Error(
+        `${describeJsonExpectation(context)}，属性 ${key} 的值为 undefined`,
+      );
+    }
+    assertJsonValue(entry, seen, context);
+  }
+  seen.delete(record);
+}
+
+function assertJsonValue(
+  value: unknown,
+  seen: Set<unknown>,
+  context: JsonContext,
+): asserts value is JsonValue {
+  if (value == null) {
+    return;
+  }
+
+  switch (typeof value) {
+    case 'string':
+    case 'boolean':
+      return;
+    case 'number':
+      if (Number.isFinite(value)) {
+        return;
+      }
+      throw new Error(
+        `${describeJsonExpectation(context)}，数值必须是有限数字`,
+      );
+    case 'object':
+      break;
+    default:
+      throw new Error(
+        `${describeJsonExpectation(context)}，不接受 ${typeof value} 类型`,
+      );
+  }
+
+  if (Array.isArray(value)) {
+    if (seen.has(value)) {
+      throw new Error('数据存在循环引用，无法通过事件桥传递');
+    }
+    seen.add(value);
+    for (const item of value) {
+      assertJsonValue(item, seen, context);
+    }
+    seen.delete(value);
+    return;
+  }
+
+  if (isPlainRecord(value)) {
+    assertJsonRecord(value as Record<string, unknown>, seen, context);
+    return;
+  }
+
+  throw new Error(describeJsonExpectation(context));
+}
+
+type JsonContext =
+  | 'handler_result'
+  | 'dispatch_payload'
+  | 'incoming_payload';
+
+function describeJsonExpectation(context: JsonContext): string {
+  switch (context) {
+    case 'handler_result':
+      return '事件处理器必须返回可 JSON 序列化的普通对象';
+    case 'dispatch_payload':
+      return 'dispatch 的 payload 必须是可 JSON 序列化的普通对象';
+    case 'incoming_payload':
+      return '原生事件的 payload 必须是可 JSON 序列化的普通对象';
+    default:
+      return '数据必须是可 JSON 序列化的普通对象';
+  }
+}
+
+function isPlainRecord(value: unknown): value is Record<string, unknown> {
+  if (typeof value !== 'object' || value === null) {
+    return false;
+  }
+  if (Array.isArray(value)) {
+    return false;
+  }
+  const prototype = Object.getPrototypeOf(value);
+  return prototype === Object.prototype || prototype === null;
 }
 /**
  * 为指定 type 注册一个事件处理器。注册后即开始监听原生事件。
+ * 如果该 type 已存在处理器，需要先移除旧处理器再注册新的，以免无意覆盖。
  *
  * @returns 调用后移除当前处理器。
  */
@@ -114,7 +223,9 @@ export function setEventHandler(
 ): () => void {
   const existing = handlersByType.get(type);
   if (existing && existing !== handler) {
-    console.warn(`setEventHandler: 类型 ${type} 的处理器已存在，将被新的处理器覆盖`);
+    throw new Error(
+      `类型 ${type} 的处理器已存在，请先移除旧处理器后再注册新的处理器`,
+    );
   }
   handlersByType.set(type, handler);
   ensureSubscription();
@@ -160,5 +271,27 @@ export function dispatch<TResult extends JsonObject>(
   type: string,
   payload?: JsonObject,
 ): Promise<TResult> {
-  return requireNativeBridge().dispatch(type, ensureJsonObject(payload ?? {}));
+  return requireNativeBridge().dispatch(
+    type,
+    ensureJsonObject(payload ?? {}, 'dispatch_payload'),
+  );
+}
+
+export function setNativeBridgeForTesting(
+  bridge: typeof NativeModules.EventBridge | null | undefined,
+) {
+  testingNativeBridge = bridge;
+  cachedNativeBridge = bridge === undefined ? undefined : bridge;
+  resetNativeBindings();
+  if (handlersByType.size > 0 || defaultHandler != null) {
+    ensureSubscription();
+  }
+}
+
+function resetNativeBindings() {
+  if (subscription) {
+    subscription.remove();
+    subscription = undefined;
+  }
+  emitter = undefined;
 }
