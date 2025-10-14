@@ -11,24 +11,31 @@ This module lets native iOS/Android code dispatch an event that is handled insid
 ## JavaScript API
 
 ```ts
-import {addEventHandler, dispatch} from 'react-native-event-bridge';
+import {
+  dispatch,
+  setEventHandler,
+  setDefaultHandler,
+} from 'react-native-event-bridge';
 
-// Handle native events.
-const remove = addEventHandler(async ({type, payload}) => {
-  if (type === 'collectUserInput') {
+// 为特定事件 type 注册处理器
+const removeUserInputHandler = setEventHandler(
+  'collectUserInput',
+  async ({payload}) => {
     const answer = await showPrompt(payload.question);
     return {answer};
-  }
+  },
+);
 
-  // Returning undefined lets other handlers take over.
-  return undefined;
+// 或者配置一个兜底处理器
+setDefaultHandler(async ({type}) => {
+  return {message: `类型 ${type} 暂无专用处理器`};
 });
 
 // Optionally send an event to native and await a response.
 const result = await dispatch('nativeCommand', {foo: 'bar'});
 ```
 
-Handlers must return a plain object that will be passed back to native as the response payload. Throwing or returning a rejected promise will surface an error to native.
+处理器需要返回一个普通对象以响应原生侧请求；如果抛出异常或返回 reject，将触发原生收到 `handler_error` 的拒绝信息。
 
 ## Android Integration
 
@@ -95,9 +102,8 @@ The module emits the same `EventBridgeEvent`; JavaScript handlers reply via `Nat
 
 ## Error Handling
 
-- If no JavaScript handler is registered, native receives a rejection with code `no_handler`.
-- If handlers run but none returns a value, native receives `unhandled_event`.
-- Exceptions thrown in handlers result in `handler_error`.
+- 若找不到匹配 type 的处理器（也未设置默认处理器），原生会收到 `no_handler`。
+- JS 处理器抛出异常或返回非对象值时，原生会收到 `handler_error`，错误信息为异常 message。
 
 ## Next Steps
 
