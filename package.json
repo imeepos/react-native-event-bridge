@@ -12,17 +12,31 @@
     "ios",
     "dist",
     "src",
+    "app.plugin.js",
+    "react-native.config.js",
+    "react-native-event-bridge.podspec",
     "README.md"
   ],
   "scripts": {
-    "build": "tsc --project tsconfig.json",
-    "prepare": "tsc --project tsconfig.json"
+    "build": "pnpm run build:js && pnpm run build:plugin",
+    "build:js": "tsc --project tsconfig.json",
+    "build:plugin": "tsc --project tsconfig.plugin.json",
+    "prepare": "pnpm run build"
   },
   "peerDependencies": {
+    "@expo/config-plugins": ">=6.0.0",
     "react": ">=18.0.0",
     "react-native": ">=0.72.0"
   },
   "devDependencies": {
+    "@expo/config-plugins": "^8.0.6",
     "typescript": "^5.3.3"
+  },
+  "expo": {
+    "config": {
+      "plugins": [
+        "./app.plugin.js"
+      ]
+    }
   }
 }

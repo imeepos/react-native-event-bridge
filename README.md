@@ -37,7 +37,16 @@ const result = await dispatch('nativeCommand', {foo: 'bar'});
 
 处理器需要返回一个普通对象以响应原生侧请求；如果抛出异常或返回 reject，将触发原生收到 `handler_error` 的拒绝信息。
 
+## Expo 集成
+
+- 安装依赖：`pnpm add react-native-event-bridge`
+- 运行 `npx expo prebuild`（或 `expo prebuild`）生成原生工程
+- Expo 会自动执行内置 config plugin，完成包注册与 Pod 依赖写入
+- 重新构建 iOS/Android 客户端（Expo Go 不支持运行该模块）
+
 ## Android Integration
+
+若使用纯 React Native 工程，可自行确认 `EventBridgePackage` 是否注入；自动链接失败时，可以按需手动添加：
 
 1. Register the package:
 
@@ -79,8 +88,9 @@ const result = await dispatch('nativeCommand', {foo: 'bar'});
 
 ## iOS Integration
 
-1. Add the files under `ios/` to your Xcode project and make sure React headers are available (install pods if necessary).
-2. From native Swift/Objective-C, call the static helper:
+Pod 自动链接会把 `EventBridge` 代码编译进项目；若你选择手动集成，可将 `ios/` 目录下文件拖入 Xcode，并确保 React 头文件可用。
+
+从原生 Swift/Objective-C 调用示例：
 
    ```swift
    EventBridge.dispatch(
